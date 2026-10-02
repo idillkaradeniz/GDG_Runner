@@ -1,0 +1,1999 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GDG Runner Düellosu</title>
+<!--
+  GDG RUNNER DÜELLOSU
+  GDG On Campus Biruni University · Stand Haftası
+
+  Tek dosya: HTML + CSS + JavaScript (Canvas 2D). Harici kütüphane, CDN, görsel veya ses yok.
+  Çift tıklanarak (file://) internetsiz çalışır.
+
+  ŞARTNAMEDE BELİRSİZ KALAN NOKTALAR İÇİN VERİLEN KARARLAR:
+  1. Fizik sabit adımlı (1/240 sn) alt adımlarla hesaplanır; böylece 60 Hz ve 144 Hz ekranlarda
+     oyun birebir aynı davranır ve hızlı engeller "içinden geçilmez".
+  2. Düello: iki yarının her biri kendi mulberry32 üretecini AYNI tohumla kurar. Hız ve mesafe
+     iki tarafta ortaktır (zamana bağlıdır), bu yüzden engellerin türü, sırası ve konumu birebir aynıdır.
+  3. Oyun, ilk çarpmada iki tarafta da bittiği için iki oyuncunun mesafesi pratikte aynıdır.
+     Aynı karede (fizik adımında) iki taraf da çarparsa mesafeye bakılır; eşitse "BERABERE!" yazar.
+     Beraberlikte kimse ödül almaz ve tabloya kayıt girilmez (tekrar oynayabilirler).
+  4. Skor her oyun sonunda tabloya otomatik olarak "Anonim" adıyla kaydedilir; oyuncu isterse
+     takma adını yazıp kaydeder. Düelloda tabloya kazanan kaydedilir.
+  5. Ödül eşiği "geçmek" = mesafe >= eşik.
+  6. İsim kutusu otomatik odaklanmaz: çarpmadan sonra tuşlara basmaya devam eden oyuncular
+     yanlışlıkla kutuya yazmasın. Kutuya tıklayıp yazılır, Enter ile kaydedilir.
+  7. Zıplama tamponu: tuşa yere inmeden çok kısa süre (0,1 sn) önce basılırsa iner inmez zıplar.
+     Bu sadece hissi iyileştirir; basılı tutmak yine de tekrar zıplatmaz.
+  8. Tek kişilik modda ↑ tuşu da zıplatır (kolaylık). Ana menüde ↑/↓ seçimi değiştirir.
+  9. Ödül eşiğinde yolda yeşil bir bayrak görünür (oyuncu hedefini görsün).
+  10. Opsiyonel iyileştirmelerin hepsi eklendi: 250/500/750 m bildirimleri, gündüzden akşama
+      renk geçişi, "Bugün X kişi ödül kazandı" sayacı ve Gamepad desteği
+      (1. kumanda = Oyuncu 1, 2. kumanda = Oyuncu 2; menüde/sonuçta A tuşu = Enter).
+-->
+<style>
+  /* ===================== TEMEL ===================== */
+  :root {
+    --blue: #4285F4;
+    --red: #EA4335;
+    --yellow: #FBBC05;
+    --green: #34A853;
+    --bg: #F8F9FA;
+    --text: #202124;
+    --muted: #5f6368;
+    --line: #dadce0;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #e8eaed;            /* letterbox rengi */
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font-family: inherit; }
+
+  /* 1280x720 mantıksal sahne; JS pencereye göre ölçekler (letterbox) */
+  #stage {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 1280px;
+    height: 720px;
+    transform-origin: 0 0;
+    overflow: hidden;
+    background: var(--bg);
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+  }
+  #stage canvas {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 1280px;
+    height: 720px;
+  }
+  #fx { pointer-events: none; z-index: 30; }
+  .overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+  }
+  .hidden { display: none !important; }
+
+  /* ===================== ANA MENÜ ===================== */
+  #menu {
+    display: grid;
+    grid-template-columns: 1fr 400px;
+    gap: 40px;
+    padding: 56px 64px 40px;
+    background: linear-gradient(90deg, rgba(248,249,250,0.94) 0%, rgba(248,249,250,0.82) 55%, rgba(248,249,250,0.35) 100%);
+  }
+  .menu-left { display: flex; flex-direction: column; gap: 18px; }
+  .logo { display: flex; gap: 10px; align-items: center; }
+  .logo i { width: 22px; height: 22px; border-radius: 6px; }
+  .menu-title {
+    margin: 6px 0 0;
+    font-size: 78px;
+    line-height: 0.98;
+    font-weight: 900;
+    letter-spacing: -0.02em;
+  }
+  .menu-title span:nth-child(1) { color: var(--blue); }
+  .menu-title span:nth-child(2) { color: var(--red); }
+  .menu-title span:nth-child(3) { color: var(--yellow); }
+  .menu-sub { margin: 0; font-size: 26px; font-weight: 700; color: var(--muted); }
+  .mode-btns { display: flex; gap: 20px; margin-top: 18px; }
+  .mode-btn {
+    border: 0;
+    border-radius: 22px;
+    padding: 22px 34px;
+    font-size: 34px;
+    font-weight: 900;
+    color: #fff;
+    cursor: pointer;
+    transition: transform 0.12s, box-shadow 0.12s;
+    outline: none;
+  }
+  .mode-btn.b1 { background: var(--blue); box-shadow: 0 8px 0 #2a5bb8; }
+  .mode-btn.b2 { background: var(--red);  box-shadow: 0 8px 0 #b3261e; }
+  .mode-btn.sel { transform: translateY(-4px) scale(1.04); }
+  .mode-btn.sel.b1 { box-shadow: 0 12px 0 #2a5bb8, 0 0 0 6px rgba(66,133,244,0.3); }
+  .mode-btn.sel.b2 { box-shadow: 0 12px 0 #b3261e, 0 0 0 6px rgba(234,67,53,0.3); }
+  .mode-btn small { display: block; font-size: 16px; font-weight: 700; opacity: 0.9; margin-top: 4px; }
+  .prize-info {
+    margin-top: 16px;
+    display: inline-flex;
+    align-self: flex-start;
+    align-items: center;
+    gap: 12px;
+    background: var(--yellow);
+    color: var(--text);
+    font-size: 28px;
+    font-weight: 900;
+    padding: 14px 24px;
+    border-radius: 16px;
+    box-shadow: 0 6px 0 #d49b00;
+    animation: wiggle 2.6s ease-in-out infinite;
+  }
+  @keyframes wiggle {
+    0%, 100% { transform: rotate(0deg); }
+    50% { transform: rotate(-1.5deg) scale(1.02); }
+  }
+  .winners-today { font-size: 22px; font-weight: 800; color: var(--green); margin: 0; }
+  .controls-hint { margin-top: auto; font-size: 17px; color: var(--muted); font-weight: 600; line-height: 1.6; }
+  .controls-hint b { color: var(--text); }
+  kbd {
+    display: inline-block;
+    min-width: 1.7em;
+    padding: 0 6px;
+    border: 2px solid var(--line);
+    border-bottom-width: 4px;
+    border-radius: 7px;
+    background: #fff;
+    font-family: inherit;
+    font-weight: 800;
+    text-align: center;
+    color: var(--text);
+  }
+  .board {
+    align-self: start;
+    background: rgba(255,255,255,0.95);
+    border-radius: 24px;
+    padding: 24px 26px;
+    box-shadow: 0 14px 40px rgba(0,0,0,0.12);
+  }
+  .board h2 { margin: 0 0 4px; font-size: 28px; font-weight: 900; }
+  .board .date { color: var(--muted); font-weight: 700; font-size: 16px; margin-bottom: 14px; }
+  .board ol { list-style: none; margin: 0; padding: 0; }
+  .board li {
+    display: grid;
+    grid-template-columns: 38px 1fr auto;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 0;
+    font-size: 21px;
+    font-weight: 700;
+    border-bottom: 1px solid #f1f3f4;
+  }
+  .board li:last-child { border-bottom: 0; }
+  .board .rank {
+    width: 30px; height: 30px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: #f1f3f4; font-size: 15px; font-weight: 900;
+  }
+  .board li:nth-child(1) .rank { background: var(--yellow); }
+  .board li:nth-child(2) .rank { background: #dadce0; }
+  .board li:nth-child(3) .rank { background: #f6c39b; }
+  .board .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .board .nm small { font-size: 13px; color: var(--muted); font-weight: 700; margin-left: 6px; }
+  .board .dist { font-variant-numeric: tabular-nums; font-weight: 900; }
+  .board li.empty { display: block; color: var(--muted); font-size: 19px; font-weight: 600; padding: 10px 0; }
+
+  /* ===================== SONUÇ EKRANI ===================== */
+  #result {
+    display: grid;
+    place-items: center;
+    background: rgba(248,249,250,0.9);
+  }
+  #result.win { background: rgba(52,168,83,0.96); color: #fff; }
+  .res-card {
+    width: 1000px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+  }
+  .res-title { margin: 0; font-size: 84px; font-weight: 900; line-height: 1; letter-spacing: -0.01em; }
+  .res-distance { font-size: 64px; font-weight: 900; font-variant-numeric: tabular-nums; }
+  .res-msg { margin: 0; font-size: 34px; font-weight: 800; line-height: 1.25; max-width: 940px; }
+  .res-msg.big { font-size: 44px; }
+  .duel-dists { display: flex; gap: 28px; }
+  .duel-dist {
+    min-width: 300px;
+    padding: 16px 26px;
+    border-radius: 20px;
+    background: #fff;
+    color: var(--text);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    border: 5px solid transparent;
+  }
+  .duel-dist .who { font-size: 22px; font-weight: 900; }
+  .duel-dist .m { font-size: 52px; font-weight: 900; font-variant-numeric: tabular-nums; }
+  .duel-dist.p1 .who { color: var(--blue); }
+  .duel-dist.p2 .who { color: var(--red); }
+  .duel-dist.winner.p1 { border-color: var(--blue); }
+  .duel-dist.winner.p2 { border-color: var(--red); }
+  .record-badge {
+    background: var(--yellow);
+    color: var(--text);
+    font-size: 32px;
+    font-weight: 900;
+    padding: 10px 26px;
+    border-radius: 999px;
+    box-shadow: 0 6px 0 #d49b00;
+    animation: pop 0.9s ease-in-out infinite alternate;
+  }
+  @keyframes pop { from { transform: scale(1); } to { transform: scale(1.07); } }
+  .name-form { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
+  .name-form label { font-size: 20px; font-weight: 800; }
+  .name-form input {
+    width: 280px;
+    font-size: 24px;
+    font-weight: 700;
+    padding: 10px 16px;
+    border-radius: 12px;
+    border: 3px solid var(--line);
+    font-family: inherit;
+    outline: none;
+    color: var(--text);
+    background: #fff;
+  }
+  .name-form input:focus { border-color: var(--blue); }
+  .res-btn {
+    border: 0;
+    border-radius: 14px;
+    padding: 12px 24px;
+    font-size: 22px;
+    font-weight: 900;
+    cursor: pointer;
+    background: var(--blue);
+    color: #fff;
+    box-shadow: 0 5px 0 #2a5bb8;
+  }
+  .res-btn.ghost { background: #fff; color: var(--text); box-shadow: 0 5px 0 #c4c7c5; }
+  .res-btn:active { transform: translateY(3px); }
+  .res-btns { display: flex; gap: 16px; margin-top: 6px; }
+  .res-hint { font-size: 18px; font-weight: 700; opacity: 0.75; }
+  .saved-note { font-size: 20px; font-weight: 800; color: var(--green); }
+  #result.win .saved-note { color: #fff; }
+  .timer { width: 360px; height: 8px; border-radius: 999px; background: rgba(0,0,0,0.12); overflow: hidden; }
+  .timer > div { height: 100%; width: 100%; background: currentColor; transform-origin: left; }
+
+  /* ===================== YÖNETİCİ PANELİ ===================== */
+  #admin {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    width: min(420px, calc(100vw - 32px));
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    z-index: 100;
+    font-size: 14px;
+    padding: 0 18px 18px;
+  }
+  #admin header {
+    position: sticky;
+    top: 0;
+    background: #fff;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 0 10px;
+    border-bottom: 1px solid #f1f3f4;
+  }
+  #admin h3 { margin: 0; font-size: 17px; }
+  #admin h4 { margin: 16px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  #admin .close { border: 0; background: transparent; font-size: 24px; cursor: pointer; line-height: 1; padding: 2px 8px; border-radius: 8px; }
+  #admin .close:hover { background: #f1f3f4; }
+  .field { display: grid; grid-template-columns: 1fr 120px; gap: 10px; align-items: center; margin-bottom: 8px; }
+  .field input[type=number] {
+    width: 100%;
+    padding: 7px 8px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: inherit;
+    text-align: right;
+  }
+  .radio { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 6px; cursor: pointer; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat { background: #f8f9fa; border-radius: 10px; padding: 10px 12px; }
+  .stat b { display: block; font-size: 24px; }
+  .stat span { color: var(--muted); font-size: 12px; }
+  .abtns { display: flex; gap: 8px; flex-wrap: wrap; }
+  .abtn {
+    border: 1px solid var(--line);
+    background: #fff;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .abtn:hover { background: #f1f3f4; }
+  .abtn.danger { color: #d93025; border-color: #f4c7c3; }
+  .abtn.danger:hover { background: #fdecea; }
+  .note { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <canvas id="game"></canvas>
+
+  <!-- ANA MENÜ -->
+  <div id="menu" class="overlay">
+    <div class="menu-left">
+      <div class="logo"><i style="background:#4285F4"></i><i style="background:#EA4335"></i><i style="background:#FBBC05"></i><i style="background:#34A853"></i></div>
+      <h1 class="menu-title"><span>GDG</span> <span>Runner</span><br><span>Düellosu</span></h1>
+      <p class="menu-sub">GDG On Campus Biruni University</p>
+      <div class="mode-btns">
+        <button class="mode-btn b1 sel" id="btnSingle">1 · Tek Kişilik<small>Zıpla: W / Boşluk</small></button>
+        <button class="mode-btn b2" id="btnDuel">2 · Düello<small>W  vs  ↑</small></button>
+      </div>
+      <div class="prize-info" id="prizeInfo">🎁 1000 metreyi geç, sürpriz ödülü kazan!</div>
+      <p class="winners-today" id="winnersToday"></p>
+      <div class="controls-hint">
+        <b>Seç:</b> <kbd>1</kbd> / <kbd>2</kbd> ya da <kbd>Enter</kbd> &nbsp;·&nbsp;
+        <b>Oyuncu 1:</b> <kbd>W</kbd> / <kbd>Boşluk</kbd> &nbsp;·&nbsp; <b>Oyuncu 2:</b> <kbd>↑</kbd><br>
+        <kbd>F</kbd> tam ekran &nbsp;·&nbsp; <kbd>M</kbd> ses &nbsp;·&nbsp; Dokunmatik ekranda dokunarak zıpla
+      </div>
+    </div>
+    <div class="board">
+      <h2>🏆 Günün Liderleri</h2>
+      <div class="date" id="boardDate"></div>
+      <ol id="boardList"></ol>
+    </div>
+  </div>
+
+  <!-- SONUÇ EKRANI -->
+  <div id="result" class="overlay hidden">
+    <div class="res-card">
+      <h2 class="res-title" id="resTitle"></h2>
+      <div class="res-distance" id="resDistance"></div>
+      <div class="duel-dists hidden" id="duelDists">
+        <div class="duel-dist p1" id="dd1"><div class="who">OYUNCU 1</div><div class="m" id="dd1m"></div></div>
+        <div class="duel-dist p2" id="dd2"><div class="who">OYUNCU 2</div><div class="m" id="dd2m"></div></div>
+      </div>
+      <div class="record-badge hidden" id="recordBadge">⭐ YENİ GÜNÜN REKORU! ⭐</div>
+      <p class="res-msg" id="resMsg"></p>
+      <form class="name-form" id="nameForm" autocomplete="off">
+        <label for="nameInput" id="nameLabel">Takma adın:</label>
+        <input id="nameInput" maxlength="12" placeholder="(isteğe bağlı)" spellcheck="false">
+        <button type="submit" class="res-btn ghost">Kaydet</button>
+      </form>
+      <div class="saved-note hidden" id="savedNote"></div>
+      <div class="res-btns">
+        <button class="res-btn" id="btnAgain">↻ Tekrar Oyna (Enter)</button>
+        <button class="res-btn ghost" id="btnMenu">Ana Menü (Esc)</button>
+      </div>
+      <div class="timer"><div id="resTimer"></div></div>
+    </div>
+  </div>
+
+  <canvas id="fx"></canvas>
+</div>
+
+<!-- GİZLİ YÖNETİCİ PANELİ (Ctrl + Shift + A) -->
+<div id="admin" class="hidden">
+  <header>
+    <h3>⚙️ Yönetici Paneli</h3>
+    <button class="close" id="adminClose" title="Kapat">×</button>
+  </header>
+  <h4>Ödül</h4>
+  <div class="field"><label for="setThreshold">Ödül eşiği (metre)</label><input type="number" id="setThreshold" min="1" step="10"></div>
+  <h4>Düelloda ödül kuralı</h4>
+  <label class="radio"><input type="radio" name="duelRule" value="a" id="ruleA"> <span>(a) Düelloyu kazanmak yeterli</span></label>
+  <label class="radio"><input type="radio" name="duelRule" value="b" id="ruleB"> <span>(b) Kazanan ayrıca eşik mesafeyi de geçmeli</span></label>
+  <h4>Zorluk</h4>
+  <div class="field"><label for="setStartSpeed">Başlangıç hızı (px/sn)</label><input type="number" id="setStartSpeed" min="100" max="1100" step="10"></div>
+  <div class="field"><label for="setAccel">Hız artışı (px/sn her saniye)</label><input type="number" id="setAccel" min="0" max="100" step="1"></div>
+  <p class="note">Ayarlar anında kaydedilir; hız ayarları bir sonraki oyunda geçerli olur.</p>
+  <h4>İstatistik</h4>
+  <div class="stats">
+    <div class="stat"><b id="stGamesToday">0</b><span>Bugün oynanan oyun</span></div>
+    <div class="stat"><b id="stWinnersToday">0</b><span>Bugün ödül kazanan</span></div>
+    <div class="stat"><b id="stGamesAll">0</b><span>Toplam oyun</span></div>
+    <div class="stat"><b id="stWinnersAll">0</b><span>Toplam ödül kazanan</span></div>
+  </div>
+  <h4>Sıfırlama</h4>
+  <div class="abtns">
+    <button class="abtn danger" id="resetToday">Bugünün tablosunu sıfırla</button>
+    <button class="abtn danger" id="resetAll">Tüm verileri sıfırla</button>
+  </div>
+  <p class="note">Varsayılan değerleri kalıcı olarak değiştirmek için index.html başındaki CONFIG nesnesini düzenleyin.</p>
+</div>
+
+<script>
+'use strict';
+
+/* =====================================================================
+   1) CONFIG — Ayarlanabilir tüm değerler
+   ===================================================================== */
+const CONFIG = {
+  // Fizik ve hız (piksel / saniye)
+  physics: {
+    startSpeed: 400,          // dünyanın sola kayma hızı
+    speedIncrease: 12,        // her saniye eklenen hız
+    maxSpeed: 1100,           // bu değerden sonra hız sabit
+    gravity: 2600,            // px/sn²
+    jumpVelocity: -900,       // zıplama anındaki dikey hız
+    variableJump: true,       // tuş erken bırakılırsa yukarı hız yarıya iner
+    jumpCutFactor: 0.5,
+    jumpBufferSec: 0.1,       // yere inmeden hemen önce basılan zıplamayı hatırla
+    fixedStep: 1 / 240        // fizik alt adımı (saniye)
+  },
+  // Engel üretimi
+  spawn: {
+    minGapSec: 1.1,           // engeller arası en az süre (o anki hıza göre yol)
+    maxGapSec: 2.2,           // engeller arası en fazla süre
+    safetyMarginPx: 50,       // "her zaman zıplanabilir" güvenlik payı
+    firstObstacleSec: 1.6,    // oyun başında ilk engele kadar süre
+    flyingFromMeters: 300,    // uçan bug bu mesafeden sonra çıkar
+    doubleFromMeters: 100,    // çift engel bu mesafeden sonra çıkar
+    weights: { bug: 35, coffee: 25, sign: 20, double: 10, flying: 18 }
+  },
+  // Boyutlar (piksel)
+  sizes: {
+    player: { w: 46, h: 56 },
+    bug: { w: 40, h: 30 },
+    sign: { w: 45, h: 70 },
+    coffee: { w: 35, h: 50 },
+    flying: { w: 45, h: 30, lift: 64 },   // lift: alt kenarın yerden yüksekliği (zıplamanın ortası)
+    hitboxShrink: 0.15                    // çarpışma kutusu görselden %15 küçük
+  },
+  metersPerPx: 0.1,           // 10 px = 1 m
+  // Oyun kuralları
+  rules: {
+    prizeThreshold: 1000,     // metre
+    duelRule: "b",            // "a": düelloyu kazanmak yeterli, "b": kazanan eşiği de geçmeli
+    milestones: [250, 500, 750],
+    resultTimeoutSec: 20,     // sonuç ekranında işlem yoksa menüye dönüş
+    crashPauseSec: 1.3,       // çarpma efekti ile sonuç ekranı arasındaki süre
+    nameMaxLength: 12,
+    leaderboardSize: 10
+  },
+  // Görünüm
+  view: {
+    width: 1280,
+    height: 720,
+    playerX: 130,             // oyuncunun ekrandaki yatay konumu (şerit içinde)
+    singleScale: 1.15,        // tek kişilik modda dünya biraz büyük çizilir
+    duelScale: 1.0,
+    eveningMeters: 1500       // arka plan bu mesafede tamamen "akşam" rengine geçer
+  },
+  demo: { speed: 480, speedIncrease: 4 },
+  storageKey: "gdg-runner-duellosu-v1"
+};
+
+/* =====================================================================
+   2) YARDIMCILAR
+   ===================================================================== */
+const $ = (s) => document.querySelector(s);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+
+// Tohumlu rastgele sayı üreteci (mulberry32)
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function newSeed() {
+  try {
+    const a = new Uint32Array(1);
+    crypto.getRandomValues(a);
+    return a[0];
+  } catch (e) {
+    return (Math.random() * 4294967296) >>> 0;
+  }
+}
+// Arka plan süsleri için sabit "hash" (her karede aynı sonucu verir)
+function hash01(n) {
+  const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
+function dayKey(ts) {
+  const d = new Date(ts);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function hexToRgb(h) {
+  const n = parseInt(h.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function mixColor(a, b, t) {
+  const A = hexToRgb(a), B = hexToRgb(b);
+  return `rgb(${Math.round(lerp(A[0], B[0], t))},${Math.round(lerp(A[1], B[1], t))},${Math.round(lerp(A[2], B[2], t))})`;
+}
+
+/* =====================================================================
+   3) KAYIT (localStorage): ayarlar, liderlik tablosu, oyun geçmişi
+   ===================================================================== */
+function defaultData() {
+  return {
+    settings: {
+      prizeThreshold: CONFIG.rules.prizeThreshold,
+      duelRule: CONFIG.rules.duelRule,
+      startSpeed: CONFIG.physics.startSpeed,
+      speedIncrease: CONFIG.physics.speedIncrease,
+      muted: false
+    },
+    scores: [],   // { id, name, distance, ts, mode }
+    games: []     // { ts, mode, distance, prize }
+  };
+}
+function loadData() {
+  const d = defaultData();
+  try {
+    const raw = localStorage.getItem(CONFIG.storageKey);
+    if (!raw) return d;
+    const s = JSON.parse(raw);
+    if (s && typeof s === "object") {
+      if (s.settings) {
+        const st = s.settings;
+        if (Number(st.prizeThreshold) > 0) d.settings.prizeThreshold = Number(st.prizeThreshold);
+        if (st.duelRule === "a" || st.duelRule === "b") d.settings.duelRule = st.duelRule;
+        if (Number(st.startSpeed) > 0) d.settings.startSpeed = Number(st.startSpeed);
+        if (Number(st.speedIncrease) >= 0) d.settings.speedIncrease = Number(st.speedIncrease);
+        d.settings.muted = !!st.muted;
+      }
+      if (Array.isArray(s.scores)) d.scores = s.scores.filter((x) => x && Number.isFinite(x.distance));
+      if (Array.isArray(s.games)) d.games = s.games.filter((x) => x && x.ts);
+    }
+  } catch (e) { /* bozuk veri: varsayılanla devam */ }
+  return d;
+}
+function saveData() {
+  // Çok uzun stand haftalarında bile sınırlı kalsın
+  if (data.scores.length > 5000) data.scores.splice(0, data.scores.length - 5000);
+  if (data.games.length > 10000) data.games.splice(0, data.games.length - 10000);
+  try { localStorage.setItem(CONFIG.storageKey, JSON.stringify(data)); } catch (e) { /* depolama kapalı */ }
+}
+let data = loadData();
+
+function todayScores() {
+  const k = dayKey(Date.now());
+  return data.scores.filter((s) => dayKey(s.ts) === k).sort((a, b) => b.distance - a.distance || a.ts - b.ts);
+}
+function todayRecord() {
+  const t = todayScores();
+  return t.length ? t[0].distance : 0;
+}
+function todayWinners() {
+  const k = dayKey(Date.now());
+  return data.games.filter((g) => g.prize && dayKey(g.ts) === k).length;
+}
+
+/* =====================================================================
+   4) SES — Web Audio API ile üretilen kısa efektler
+   ===================================================================== */
+const Sound = (() => {
+  let ctx = null, master = null, noiseBuf = null;
+  function ensure() {
+    if (!ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      ctx = new AC();
+      master = ctx.createGain();
+      master.gain.value = 0.55;
+      master.connect(ctx.destination);
+      noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 0.6, ctx.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    }
+    if (ctx.state === "suspended") ctx.resume();
+    return ctx;
+  }
+  const on = () => !data.settings.muted && ensure();
+  function tone(f, t0, dur, { type = "square", vol = 0.15, slideTo = null } = {}) {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(f, t0);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(master);
+    o.start(t0); o.stop(t0 + dur + 0.05);
+  }
+  function noise(t0, dur, vol, freq) {
+    const s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    s.buffer = noiseBuf;
+    f.type = "lowpass";
+    f.frequency.setValueAtTime(freq, t0);
+    f.frequency.exponentialRampToValueAtTime(120, t0 + dur);
+    g.gain.setValueAtTime(vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    s.connect(f); f.connect(g); g.connect(master);
+    s.start(t0); s.stop(t0 + dur + 0.05);
+  }
+  return {
+    unlock() { ensure(); },
+    // Oyuncu 1 ve 2'nin zıplama sesleri biraz farklı perdede
+    jump(player) {
+      if (!on()) return;
+      const base = player === 1 ? 520 : 380;
+      tone(base, ctx.currentTime, 0.14, { slideTo: base * 1.9, vol: 0.09 });
+    },
+    crash() {
+      if (!on()) return;
+      const t = ctx.currentTime;
+      noise(t, 0.45, 0.5, 3000);
+      tone(220, t, 0.4, { type: "sawtooth", slideTo: 55, vol: 0.16 });
+    },
+    countdown(final) {
+      if (!on()) return;
+      const t = ctx.currentTime;
+      if (final) {
+        tone(880, t, 0.35, { type: "square", vol: 0.14 });
+        tone(1320, t, 0.35, { type: "triangle", vol: 0.1 });
+      } else {
+        tone(587, t, 0.16, { type: "square", vol: 0.13 });
+      }
+    },
+    milestone() {
+      if (!on()) return;
+      const t = ctx.currentTime;
+      tone(784, t, 0.12, { type: "triangle", vol: 0.15 });
+      tone(1175, t + 0.1, 0.2, { type: "triangle", vol: 0.15 });
+    },
+    record() {
+      if (!on()) return;
+      const t = ctx.currentTime;
+      [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, t + i * 0.08, 0.25, { type: "triangle", vol: 0.16 }));
+      tone(1568, t + 0.42, 0.6, { type: "square", vol: 0.08 });
+    },
+    prize() {
+      if (!on()) return;
+      const t = ctx.currentTime;
+      const mel = [[523, 0, 0.14], [523, 0.15, 0.14], [523, 0.3, 0.14], [698, 0.45, 0.5], [880, 0.95, 0.18], [784, 1.13, 0.18], [1047, 1.31, 0.7]];
+      mel.forEach(([f, s, d]) => {
+        tone(f, t + s, d, { type: "square", vol: 0.1 });
+        tone(f / 2, t + s, d, { type: "triangle", vol: 0.1 });
+      });
+    },
+    lose() {
+      if (!on()) return;
+      const t = ctx.currentTime;
+      tone(392, t, 0.2, { type: "triangle", vol: 0.14 });
+      tone(330, t + 0.2, 0.2, { type: "triangle", vol: 0.14 });
+      tone(262, t + 0.4, 0.4, { type: "triangle", vol: 0.14 });
+    },
+    click() { if (on()) tone(660, ctx.currentTime, 0.06, { vol: 0.08 }); }
+  };
+})();
+
+/* =====================================================================
+   5) OYUN DÜNYASI: şerit (lane), oyuncu, engel üretimi
+   ===================================================================== */
+const P = CONFIG.physics;
+const S = CONFIG.sizes;
+// Tam zıplamanın havada kalma süresi (sn)
+const AIR_TIME = (2 * Math.abs(P.jumpVelocity)) / P.gravity;
+
+function createPlayer(idx) {
+  return {
+    idx,                // 1 veya 2
+    y: 0,               // yerden yükseklik (negatif = yukarıda)
+    vy: 0,
+    onGround: true,
+    cut: false,         // değişken zıplama uygulandı mı
+    buffer: 0,          // zıplama tamponu
+    queued: false,      // bu adımda yeni basış var mı
+    held: false,        // zıplama tuşu basılı mı
+    legT: 0,            // bacak animasyonu zamanlayıcısı
+    crashed: false
+  };
+}
+
+// Bir şerit = bir oyuncu + kendi engel listesi + kendi tohumlu üreteci
+function createLane(idx, seed, opts) {
+  return {
+    idx,
+    rng: mulberry32(seed),
+    player: createPlayer(idx),
+    obstacles: [],
+    nextSpawnX: opts.firstSpawnX,
+    crashDistance: null,
+    flash: 0
+  };
+}
+
+// Engel nesnesi: parçalardan oluşur (çift engel = iki parça)
+function makeObstacle(type, x, rng) {
+  if (type === "double") {
+    // Yan yana iki küçük yer engeli (toplam ~90 px)
+    const left = rng() < 0.5 ? "bug" : "coffee";
+    const right = rng() < 0.5 ? "bug" : "coffee";
+    const lw = S[left].w, rw = S[right].w;
+    const gap = Math.max(4, 90 - lw - rw);
+    return {
+      type, x, w: lw + gap + rw,
+      parts: [
+        { kind: left, dx: 0, w: lw, h: S[left].h, lift: 0 },
+        { kind: right, dx: lw + gap, w: rw, h: S[right].h, lift: 0 }
+      ]
+    };
+  }
+  const sz = S[type];
+  return { type, x, w: sz.w, parts: [{ kind: type, dx: 0, w: sz.w, h: sz.h, lift: sz.lift || 0 }] };
+}
+
+// Ağırlıklı engel türü seçimi (mesafeye göre açılan türler)
+function pickObstacleType(rng, meters) {
+  const W = CONFIG.spawn.weights;
+  const list = [["bug", W.bug], ["coffee", W.coffee], ["sign", W.sign]];
+  if (meters >= CONFIG.spawn.doubleFromMeters) list.push(["double", W.double]);
+  if (meters >= CONFIG.spawn.flyingFromMeters) list.push(["flying", W.flying]);
+  const total = list.reduce((s, x) => s + x[1], 0);
+  let r = rng() * total;
+  for (const [t, w] of list) { r -= w; if (r < 0) return t; }
+  return list[list.length - 1][0];
+}
+
+// Yeni oyun (mode: "single" | "duel" | "demo")
+function createGame(mode) {
+  const settings = data.settings;
+  const isDemo = mode === "demo";
+  const scale = mode === "duel" ? CONFIG.view.duelScale : CONFIG.view.singleScale;
+  const speed = isDemo ? CONFIG.demo.speed : settings.startSpeed;
+  const seed = newSeed();
+  const viewW = CONFIG.view.width / scale;
+  const firstSpawnX = CONFIG.view.playerX + speed * CONFIG.spawn.firstObstacleSec + viewW * 0.3;
+  const laneCount = mode === "duel" ? 2 : 1;
+  const lanes = [];
+  // Düelloda iki şerit AYNI tohumu kullanır → engeller birebir aynı
+  for (let i = 0; i < laneCount; i++) lanes.push(createLane(i + 1, seed, { firstSpawnX }));
+  return {
+    mode,
+    seed,
+    scale,
+    viewW,
+    speed,
+    accel: isDemo ? CONFIG.demo.speedIncrease : settings.speedIncrease,
+    worldX: 0,
+    time: 0,
+    acc: 0,
+    lanes,
+    nextMilestone: 0,
+    thresholdAnnounced: false,
+    crashedAt: null
+  };
+}
+
+function meters(game) {
+  return Math.floor(game.worldX * CONFIG.metersPerPx);
+}
+
+// Engel üret: aralık süreye göre seçilir ve "her zaman zıplanabilir" kuralı ile alt sınırlanır
+function spawnObstacles(game, lane) {
+  const playerWorldX = game.worldX + CONFIG.view.playerX;
+  while (lane.nextSpawnX < game.worldX + game.viewW + 200) {
+    const x = lane.nextSpawnX;
+    const type = pickObstacleType(lane.rng, Math.floor(x * CONFIG.metersPerPx));
+    const obs = makeObstacle(type, x, lane.rng);
+    lane.obstacles.push(obs);
+
+    // Engelin oyuncuya ulaşacağı andaki tahmini hız
+    const tToReach = Math.max(0, (x - playerWorldX) / game.speed);
+    const vAtReach = Math.min(P.maxSpeed, game.speed + game.accel * tToReach);
+    const gapSec = lerp(CONFIG.spawn.minGapSec, CONFIG.spawn.maxGapSec, lane.rng());
+    // Güvenli en kısa aralık: tam zıplamanın yatay yolu + oyuncu genişliği + pay
+    const safeGap = AIR_TIME * vAtReach + S.player.w + CONFIG.spawn.safetyMarginPx;
+    const gapPx = Math.max(gapSec * vAtReach, safeGap);
+    lane.nextSpawnX = x + obs.w + gapPx;
+  }
+  // Ekrandan çıkan engelleri sil
+  while (lane.obstacles.length && lane.obstacles[0].x + lane.obstacles[0].w < game.worldX - 100) {
+    lane.obstacles.shift();
+  }
+}
+
+// Çarpışma kutuları (yerden yükseklik negatif yukarı). Görselden %15 küçük.
+function shrinkRect(x, top, w, h) {
+  const k = S.hitboxShrink;
+  return { x: x + (w * k) / 2, y: top + (h * k) / 2, w: w * (1 - k), h: h * (1 - k) };
+}
+function playerRect(game, p) {
+  return shrinkRect(game.worldX + CONFIG.view.playerX, p.y - S.player.h, S.player.w, S.player.h);
+}
+function partRect(obs, part) {
+  return shrinkRect(obs.x + part.dx, -part.lift - part.h, part.w, part.h);
+}
+function overlap(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+// Oyuncu fiziği (bir alt adım)
+function stepPlayer(p, dt, game) {
+  if (p.crashed) return;
+  if (p.queued) { p.buffer = P.jumpBufferSec; p.queued = false; }
+  else p.buffer = Math.max(0, p.buffer - dt);
+
+  if (p.onGround && p.buffer > 0) {
+    p.vy = P.jumpVelocity;
+    p.onGround = false;
+    p.cut = false;
+    p.buffer = 0;
+    if (game.mode !== "demo") Sound.jump(p.idx);
+  }
+  if (!p.onGround) {
+    // Değişken zıplama: tuş erken bırakılırsa yukarı hız yarıya düşer
+    if (P.variableJump && !p.held && !p.cut && p.vy < 0) {
+      p.vy *= P.jumpCutFactor;
+      p.cut = true;
+    }
+    p.vy += P.gravity * dt;
+    p.y += p.vy * dt;
+    if (p.y >= 0) { p.y = 0; p.vy = 0; p.onGround = true; }
+  }
+  p.legT += dt * (game.speed / 400);
+}
+
+// Demo (attract) modu için basit yapay zeka
+function demoAI(game, lane) {
+  const p = lane.player;
+  const front = game.worldX + CONFIG.view.playerX + S.player.w;
+  const trigger = game.speed * 0.17 + 10;
+  let want = false;
+  for (const o of lane.obstacles) {
+    const d = o.x - front;
+    if (d < -o.w) continue;
+    if (o.type === "flying") break;                 // uçan bug: zıplama, altından geç
+    if (d <= trigger) want = true;
+    break;
+  }
+  if (want && p.onGround && !p.held) p.queued = true;
+  p.held = want || (!p.onGround && p.vy < -200);
+}
+
+// Bir sabit adım: dünya ilerler, engeller üretilir, çarpışmalar kontrol edilir
+function stepGame(game, dt) {
+  game.time += dt;
+  game.speed = Math.min(P.maxSpeed, game.speed + game.accel * dt);
+  game.worldX += game.speed * dt;
+  const crashedNow = [];
+  for (const lane of game.lanes) {
+    spawnObstacles(game, lane);
+    if (game.mode === "demo") demoAI(game, lane);
+    stepPlayer(lane.player, dt, game);
+    const pr = playerRect(game, lane.player);
+    for (const o of lane.obstacles) {
+      if (o.x > pr.x + pr.w + 10) break;
+      if (o.x + o.w < pr.x - 10) continue;
+      if (o.parts.some((part) => overlap(pr, partRect(o, part)))) {
+        lane.player.crashed = true;
+        lane.crashDistance = meters(game);
+        crashedNow.push(lane);
+        break;
+      }
+    }
+  }
+  return crashedNow;
+}
+
+/* =====================================================================
+   6) ÇİZİM — robot, engeller, arka plan, HUD (tamamen canvas şekilleri)
+   ===================================================================== */
+const canvas = $("#game");
+const ctx = canvas.getContext("2d");
+const fxCanvas = $("#fx");
+const fx = fxCanvas.getContext("2d");
+const stageEl = $("#stage");
+let viewScale = 1;
+
+// Pencereye sığdır (oran korunur, letterbox)
+function resize() {
+  const W = CONFIG.view.width, H = CONFIG.view.height;
+  viewScale = Math.min(window.innerWidth / W, window.innerHeight / H);
+  const dpr = window.devicePixelRatio || 1;
+  stageEl.style.transform = `scale(${viewScale})`;
+  stageEl.style.left = (window.innerWidth - W * viewScale) / 2 + "px";
+  stageEl.style.top = (window.innerHeight - H * viewScale) / 2 + "px";
+  [canvas, fxCanvas].forEach((c) => {
+    c.width = Math.round(W * viewScale * dpr);
+    c.height = Math.round(H * viewScale * dpr);
+  });
+  const k = viewScale * dpr;
+  ctx.setTransform(k, 0, 0, k, 0, 0);
+  fx.setTransform(k, 0, 0, k, 0, 0);
+}
+window.addEventListener("resize", resize);
+
+function roundRect(c, x, y, w, h, r) {
+  c.beginPath();
+  c.moveTo(x + r, y);
+  c.arcTo(x + w, y, x + w, y + h, r);
+  c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r);
+  c.arcTo(x, y, x + w, y, r);
+  c.closePath();
+}
+
+// Sevimli robot: yuvarlak köşeli gövde, iki göz, anten, iki kare arasında değişen bacaklar
+function drawRobot(c, x, groundY, p, color, dark) {
+  const w = S.player.w, h = S.player.h;
+  const feetY = groundY + p.y;
+  c.save();
+  c.translate(x + w / 2, feetY);
+  // Zıplarken hafifçe eğilir
+  if (!p.onGround && !p.crashed) c.rotate(p.vy < 0 ? -0.14 : 0.08);
+  if (p.crashed) c.rotate(0.25);
+
+  // Gölge (yerde)
+  if (!p.crashed) {
+    c.save();
+    c.translate(0, -p.y);
+    const sh = clamp(1 + p.y / 200, 0.4, 1);
+    c.fillStyle = "rgba(0,0,0,0.12)";
+    c.beginPath();
+    c.ellipse(0, 3, 22 * sh, 5 * sh, 0, 0, Math.PI * 2);
+    c.fill();
+    c.restore();
+  }
+
+  // Bacaklar (iki kare)
+  const frame = p.onGround && !p.crashed ? Math.floor(p.legT * 10) % 2 : 2;
+  c.fillStyle = dark;
+  const legW = 9, legH = 12;
+  if (frame === 0) {
+    roundRect(c, -15, -legH - 2, legW, legH + 2, 3); c.fill();
+    roundRect(c, 5, -legH + 2, legW, legH - 2, 3); c.fill();
+  } else if (frame === 1) {
+    roundRect(c, -15, -legH + 2, legW, legH - 2, 3); c.fill();
+    roundRect(c, 5, -legH - 2, legW, legH + 2, 3); c.fill();
+  } else {
+    // havada: bacaklar toplanmış
+    roundRect(c, -14, -legH, legW, legH - 3, 3); c.fill();
+    roundRect(c, 4, -legH, legW, legH - 3, 3); c.fill();
+  }
+
+  // Gövde
+  const bodyH = h - legH;
+  c.fillStyle = color;
+  roundRect(c, -w / 2, -h, w, bodyH, 11);
+  c.fill();
+  // Yüz paneli
+  c.fillStyle = "#ffffff";
+  roundRect(c, -w / 2 + 6, -h + 7, w - 12, 20, 7);
+  c.fill();
+  // Gözler
+  if (p.crashed) {
+    c.strokeStyle = "#202124";
+    c.lineWidth = 2.5;
+    [[-8, -h + 17], [8, -h + 17]].forEach(([ex, ey]) => {
+      c.beginPath();
+      c.moveTo(ex - 4, ey - 4); c.lineTo(ex + 4, ey + 4);
+      c.moveTo(ex + 4, ey - 4); c.lineTo(ex - 4, ey + 4);
+      c.stroke();
+    });
+  } else {
+    c.fillStyle = "#202124";
+    c.beginPath(); c.arc(-8, -h + 17, 4, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.arc(8, -h + 17, 4, 0, Math.PI * 2); c.fill();
+    c.fillStyle = "#ffffff";
+    c.beginPath(); c.arc(-6.5, -h + 15.5, 1.4, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.arc(9.5, -h + 15.5, 1.4, 0, Math.PI * 2); c.fill();
+  }
+  // Göğüste küçük GDG işareti < >
+  c.strokeStyle = "rgba(255,255,255,0.85)";
+  c.lineWidth = 2.5;
+  c.lineCap = "round";
+  c.beginPath();
+  c.moveTo(-4, -h + 32); c.lineTo(-9, -h + 36); c.lineTo(-4, -h + 40);
+  c.moveTo(4, -h + 32); c.lineTo(9, -h + 36); c.lineTo(4, -h + 40);
+  c.stroke();
+  // Anten
+  c.strokeStyle = dark;
+  c.lineWidth = 3;
+  c.beginPath();
+  c.moveTo(0, -h);
+  c.lineTo(0, -h - 10);
+  c.stroke();
+  c.fillStyle = "#FBBC05";
+  c.beginPath(); c.arc(0, -h - 12, 4.5, 0, Math.PI * 2); c.fill();
+  c.restore();
+}
+
+// Bug: siyah gövde, altı bacak, antenler
+function drawBug(c, x, bottomY, w, h, t, flying) {
+  const cx = x + w / 2, cy = bottomY - h / 2 - (flying ? 0 : 4);
+  c.save();
+  // Kanatlar (uçan bug)
+  if (flying) {
+    const flap = Math.sin(t * 40) * 0.5 + 0.5;
+    c.fillStyle = "rgba(66,133,244,0.35)";
+    c.strokeStyle = "rgba(66,133,244,0.8)";
+    c.lineWidth = 1.5;
+    c.beginPath();
+    c.ellipse(cx - 4, cy - 10 - flap * 6, 13, 7 - flap * 3, -0.5, 0, Math.PI * 2);
+    c.fill(); c.stroke();
+    c.beginPath();
+    c.ellipse(cx + 6, cy - 10 - flap * 6, 13, 7 - flap * 3, 0.5, 0, Math.PI * 2);
+    c.fill(); c.stroke();
+  }
+  // Bacaklar (6 adet)
+  c.strokeStyle = "#202124";
+  c.lineWidth = 2.5;
+  c.lineCap = "round";
+  const wig = Math.sin(t * 25) * 2;
+  for (let i = 0; i < 3; i++) {
+    const lx = cx - 10 + i * 10;
+    const sway = (i % 2 ? wig : -wig);
+    c.beginPath();
+    c.moveTo(lx, cy + 2);
+    c.lineTo(lx - 6 + sway, bottomY - (flying ? 4 : 0));
+    c.moveTo(lx + 2, cy + 2);
+    c.lineTo(lx + 8 - sway, bottomY - (flying ? 4 : 0));
+    c.stroke();
+  }
+  // Gövde
+  c.fillStyle = "#202124";
+  c.beginPath();
+  c.ellipse(cx + 2, cy, w * 0.36, h * 0.36, 0, 0, Math.PI * 2);
+  c.fill();
+  // Sırt çizgisi
+  c.strokeStyle = "#5f6368";
+  c.lineWidth = 1.5;
+  c.beginPath();
+  c.moveTo(cx + 2, cy - h * 0.34);
+  c.lineTo(cx + 2, cy + h * 0.34);
+  c.stroke();
+  // Kafa (sola bakar, oyuncuya doğru)
+  c.fillStyle = "#202124";
+  c.beginPath();
+  c.arc(cx - w * 0.36, cy - 1, h * 0.22, 0, Math.PI * 2);
+  c.fill();
+  // Göz
+  c.fillStyle = "#EA4335";
+  c.beginPath();
+  c.arc(cx - w * 0.4, cy - 3, 2, 0, Math.PI * 2);
+  c.fill();
+  // Antenler
+  c.strokeStyle = "#202124";
+  c.lineWidth = 2;
+  c.beginPath();
+  c.moveTo(cx - w * 0.4, cy - h * 0.2);
+  c.quadraticCurveTo(cx - w * 0.55, cy - h * 0.6, cx - w * 0.62, cy - h * 0.55);
+  c.moveTo(cx - w * 0.32, cy - h * 0.22);
+  c.quadraticCurveTo(cx - w * 0.36, cy - h * 0.7, cx - w * 0.46, cy - h * 0.72);
+  c.stroke();
+  c.restore();
+}
+
+// 404 tabelası: direk + beyaz tabela, kırmızı kenar
+function drawSign(c, x, bottomY, w, h) {
+  c.fillStyle = "#9aa0a6";
+  c.fillRect(x + w / 2 - 3, bottomY - h * 0.55, 6, h * 0.55);
+  c.fillStyle = "#5f6368";
+  c.fillRect(x + w / 2 - 9, bottomY - 4, 18, 4);
+  const sh = h * 0.5;
+  c.fillStyle = "#ffffff";
+  roundRect(c, x - 4, bottomY - h, w + 8, sh, 5);
+  c.fill();
+  c.strokeStyle = "#EA4335";
+  c.lineWidth = 4;
+  c.stroke();
+  c.fillStyle = "#EA4335";
+  c.font = "900 17px system-ui, sans-serif";
+  c.textAlign = "center";
+  c.textBaseline = "middle";
+  c.fillText("404", x + w / 2, bottomY - h + sh / 2 + 1);
+}
+
+// Kahve bardağı: sarı karton bardak, kapak, buhar
+function drawCoffee(c, x, bottomY, w, h, t) {
+  const top = bottomY - h + 10;
+  // Buhar
+  c.strokeStyle = "rgba(95,99,104,0.45)";
+  c.lineWidth = 2.5;
+  c.lineCap = "round";
+  for (let i = 0; i < 3; i++) {
+    const sx = x + 9 + i * 8;
+    c.beginPath();
+    for (let k = 0; k <= 10; k++) {
+      const yy = top - 4 - k * 1.6;
+      const xx = sx + Math.sin(t * 6 + i * 2 + k * 0.6) * 2.5;
+      if (k === 0) c.moveTo(xx, yy); else c.lineTo(xx, yy);
+    }
+    c.stroke();
+  }
+  // Bardak gövdesi (yamuk)
+  c.fillStyle = "#FBBC05";
+  c.beginPath();
+  c.moveTo(x + 2, top + 4);
+  c.lineTo(x + w - 2, top + 4);
+  c.lineTo(x + w - 6, bottomY);
+  c.lineTo(x + 6, bottomY);
+  c.closePath();
+  c.fill();
+  // Kılıf bandı
+  c.fillStyle = "#e0a800";
+  c.beginPath();
+  c.moveTo(x + 4, top + 15);
+  c.lineTo(x + w - 4, top + 15);
+  c.lineTo(x + w - 5, top + 27);
+  c.lineTo(x + 5, top + 27);
+  c.closePath();
+  c.fill();
+  // Kapak
+  c.fillStyle = "#ffffff";
+  roundRect(c, x, top - 2, w, 7, 3);
+  c.fill();
+  c.strokeStyle = "#dadce0";
+  c.lineWidth = 1.5;
+  c.stroke();
+}
+
+function drawObstacle(c, o, offsetX, groundY, t) {
+  for (const part of o.parts) {
+    const x = o.x + part.dx - offsetX;
+    const bottom = groundY - part.lift;
+    if (part.kind === "bug") drawBug(c, x, bottom, part.w, part.h, t, false);
+    else if (part.kind === "flying") drawBug(c, x, bottom, part.w, part.h, t, true);
+    else if (part.kind === "sign") drawSign(c, x, bottom, part.w, part.h);
+    else if (part.kind === "coffee") drawCoffee(c, x, bottom, part.w, part.h, t);
+  }
+}
+
+// Arka plan: gökyüzü (gündüzden akşama), paralaks bulutlar ve kod satırları, zemin
+function drawBackground(c, game, localW, localH, groundY) {
+  const m = game.mode === "demo" ? 0 : meters(game);
+  const ev = clamp(m / CONFIG.view.eveningMeters, 0, 1);
+  const g = c.createLinearGradient(0, 0, 0, groundY);
+  g.addColorStop(0, mixColor("#F8F9FA", "#FCE4D6", ev));
+  g.addColorStop(1, mixColor("#FFFFFF", "#F3E8FD", ev));
+  c.fillStyle = g;
+  c.fillRect(0, 0, localW, groundY);
+
+  // Bulutlar (yavaş)
+  const cloudOff = game.worldX * 0.12;
+  const cs = 420;
+  c.fillStyle = mixColor("#E8EAED", "#F6D5C3", ev);
+  for (let k = Math.floor(cloudOff / cs) - 1; k <= Math.floor((cloudOff + localW) / cs) + 1; k++) {
+    const x = k * cs - cloudOff + hash01(k) * 180;
+    const y = 30 + hash01(k + 50) * Math.max(10, groundY * 0.35);
+    const s = 0.7 + hash01(k + 99) * 0.6;
+    c.beginPath();
+    c.arc(x, y, 22 * s, 0, Math.PI * 2);
+    c.arc(x + 26 * s, y - 10 * s, 28 * s, 0, Math.PI * 2);
+    c.arc(x + 56 * s, y, 22 * s, 0, Math.PI * 2);
+    c.rect(x, y, 56 * s, 22 * s);
+    c.fill();
+  }
+  // Kod satırları (biraz daha hızlı)
+  const codeOff = game.worldX * 0.3;
+  const ks = 300;
+  for (let k = Math.floor(codeOff / ks) - 1; k <= Math.floor((codeOff + localW) / ks) + 1; k++) {
+    const x = k * ks - codeOff + hash01(k + 7) * 80;
+    const y = groundY * 0.45 + hash01(k + 13) * groundY * 0.3;
+    const lines = 2 + Math.floor(hash01(k + 21) * 3);
+    for (let i = 0; i < lines; i++) {
+      const indent = (i % 2) * 18;
+      const len = 40 + hash01(k * 3 + i) * 90;
+      c.fillStyle = i === 0 ? mixColor("#D2E3FC", "#E9D2F4", ev) : mixColor("#E8EAED", "#EFDDE0", ev);
+      roundRect(c, x + indent, y + i * 14, len, 7, 3.5);
+      c.fill();
+    }
+  }
+  // Zemin
+  c.fillStyle = mixColor("#F1F3F4", "#EDE3EA", ev);
+  c.fillRect(0, groundY, localW, localH - groundY);
+  c.fillStyle = "#34A853";
+  c.fillRect(0, groundY, localW, 4);
+  // Zemin üzerindeki kayan çizgiler (hız hissi)
+  const gOff = game.worldX % 64;
+  c.fillStyle = "#dadce0";
+  for (let x = -gOff; x < localW; x += 64) {
+    c.fillRect(x, groundY + 14, 22, 3);
+    c.fillRect(x + 34, groundY + 30, 12, 3);
+  }
+}
+
+// Ödül eşiği bayrağı
+function drawThresholdFlag(c, game, groundY) {
+  const thr = data.settings.prizeThreshold;
+  const flagWorldX = thr / CONFIG.metersPerPx + CONFIG.view.playerX;
+  const x = flagWorldX - game.worldX;
+  if (x < -80 || x > game.viewW + 80) return;
+  c.fillStyle = "#5f6368";
+  c.fillRect(x, groundY - 120, 4, 120);
+  c.fillStyle = "#34A853";
+  c.beginPath();
+  c.moveTo(x + 4, groundY - 120);
+  c.lineTo(x + 92, groundY - 106);
+  c.lineTo(x + 4, groundY - 88);
+  c.closePath();
+  c.fill();
+  c.fillStyle = "#ffffff";
+  c.font = "900 13px system-ui, sans-serif";
+  c.textAlign = "left";
+  c.textBaseline = "middle";
+  c.fillText(`🎁 ${thr} m`, x + 10, groundY - 105);
+}
+
+// Bir şeridi verilen dikdörtgene çiz
+function drawLane(game, lane, rect, colors) {
+  const s = game.scale;
+  const localW = rect.w / s, localH = rect.h / s;
+  const groundY = localH - (game.mode === "duel" ? 58 : 120);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(rect.x, rect.y, rect.w, rect.h);
+  ctx.clip();
+  ctx.translate(rect.x, rect.y);
+  ctx.scale(s, s);
+  drawBackground(ctx, game, localW, localH, groundY);
+  if (game.mode !== "demo") drawThresholdFlag(ctx, game, groundY);
+  for (const o of lane.obstacles) {
+    const x = o.x - game.worldX;
+    if (x > localW + 60 || x + o.w < -60) continue;
+    drawObstacle(ctx, o, game.worldX, groundY, game.time);
+  }
+  drawRobot(ctx, CONFIG.view.playerX, groundY, lane.player, colors[0], colors[1]);
+  ctx.restore();
+}
+
+const P1C = ["#4285F4", "#1a56c4"];
+const P2C = ["#EA4335", "#b3261e"];
+
+function laneRects(game) {
+  const W = CONFIG.view.width, H = CONFIG.view.height;
+  if (game.mode === "duel") return [{ x: 0, y: 0, w: W, h: H / 2 }, { x: 0, y: H / 2, w: W, h: H / 2 }];
+  return [{ x: 0, y: 0, w: W, h: H }];
+}
+
+function text(c, str, x, y, { size = 32, color = "#202124", align = "center", weight = 900, base = "middle", stroke = null } = {}) {
+  c.font = `${weight} ${size}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+  c.textAlign = align;
+  c.textBaseline = base;
+  if (stroke) {
+    c.lineWidth = size * 0.18;
+    c.strokeStyle = stroke;
+    c.lineJoin = "round";
+    c.strokeText(str, x, y);
+  }
+  c.fillStyle = color;
+  c.fillText(str, x, y);
+}
+
+/* =====================================================================
+   7) EFEKTLER — sarsıntı, flaş, bildirimler, konfeti
+   ===================================================================== */
+const effects = { shake: 0, flash: 0, notices: [] };
+function notify(textStr, color) {
+  effects.notices.push({ text: textStr, color, t: 0, life: 1.8 });
+}
+
+const Confetti = (() => {
+  let parts = [];
+  const colors = ["#4285F4", "#EA4335", "#FBBC05", "#34A853", "#ffffff"];
+  function burst(x, y, n, palette = colors, power = 14) {
+    for (let i = 0; i < n; i++) {
+      const a = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.1;
+      const v = power * (0.4 + Math.random() * 0.8);
+      parts.push({
+        x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v,
+        w: 7 + Math.random() * 8, h: 4 + Math.random() * 6,
+        r: Math.random() * 6, vr: (Math.random() - 0.5) * 0.4,
+        tilt: Math.random() * 6, color: palette[Math.floor(Math.random() * palette.length)]
+      });
+    }
+  }
+  function rain(n, palette = colors) {
+    for (let i = 0; i < n; i++) {
+      parts.push({
+        x: Math.random() * 1280, y: -20 - Math.random() * 600, vx: (Math.random() - 0.5) * 2, vy: 2 + Math.random() * 3,
+        w: 7 + Math.random() * 8, h: 4 + Math.random() * 6,
+        r: Math.random() * 6, vr: (Math.random() - 0.5) * 0.3,
+        tilt: Math.random() * 6, color: palette[Math.floor(Math.random() * palette.length)], light: true
+      });
+    }
+  }
+  function update(dt) {
+    const k = dt * 60;
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const p = parts[i];
+      p.vx *= Math.pow(0.985, k);
+      p.vy = p.vy * Math.pow(0.985, k) + (p.light ? 0.05 : 0.32) * k;
+      p.x += (p.vx + Math.sin(p.tilt) * 0.6) * k;
+      p.y += p.vy * k;
+      p.r += p.vr * k;
+      p.tilt += 0.1 * k;
+      if (p.y > 760) parts.splice(i, 1);
+    }
+  }
+  function draw(c) {
+    for (const p of parts) {
+      c.save();
+      c.translate(p.x, p.y);
+      c.rotate(p.r);
+      c.scale(1, Math.cos(p.tilt));
+      c.fillStyle = p.color;
+      c.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+      c.restore();
+    }
+  }
+  return { burst, rain, update, draw, clear: () => { parts = []; } };
+})();
+
+/* =====================================================================
+   8) GİRİŞ — klavye, dokunma, gamepad (basılı tuş durumu takip edilir)
+   ===================================================================== */
+const keysHeld = { KeyW: false, Space: false, ArrowUp: false };
+const touchHeld = { 1: new Set(), 2: new Set() };
+const padHeld = { 1: false, 2: false };
+const padPrev = [false, false];
+
+function isTyping(t) {
+  return t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+}
+function playerHeld(idx) {
+  if (idx === 1) {
+    return keysHeld.KeyW || keysHeld.Space || touchHeld[1].size > 0 || padHeld[1] ||
+      (game && game.mode === "single" && keysHeld.ArrowUp);
+  }
+  return keysHeld.ArrowUp || touchHeld[2].size > 0 || padHeld[2];
+}
+// Zıplama isteği: yalnızca yeni basışta (basılı tutmak tekrar zıplatmaz)
+function pressJump(idx) {
+  if (state !== "playing" || !game) return;
+  const lane = game.lanes[idx - 1];
+  if (!lane) return;
+  lane.player.queued = true;
+}
+
+/* =====================================================================
+   9) DURUM MAKİNESİ: menu → countdown → playing → crashed → result
+   ===================================================================== */
+let state = "menu";
+let game = null;           // gerçek oyun
+let demo = createGame("demo");
+let countdownT = 0;
+let resultInfo = null;
+let resultIdle = 0;
+let resultShownAt = 0;
+let menuSel = 1;
+
+const el = {
+  menu: $("#menu"),
+  result: $("#result"),
+  btnSingle: $("#btnSingle"),
+  btnDuel: $("#btnDuel"),
+  prizeInfo: $("#prizeInfo"),
+  winnersToday: $("#winnersToday"),
+  boardDate: $("#boardDate"),
+  boardList: $("#boardList"),
+  resTitle: $("#resTitle"),
+  resDistance: $("#resDistance"),
+  duelDists: $("#duelDists"),
+  dd1: $("#dd1"), dd2: $("#dd2"), dd1m: $("#dd1m"), dd2m: $("#dd2m"),
+  recordBadge: $("#recordBadge"),
+  resMsg: $("#resMsg"),
+  nameForm: $("#nameForm"),
+  nameInput: $("#nameInput"),
+  nameLabel: $("#nameLabel"),
+  savedNote: $("#savedNote"),
+  resTimer: $("#resTimer"),
+  admin: $("#admin")
+};
+
+function setMenuSel(n) {
+  menuSel = n;
+  el.btnSingle.classList.toggle("sel", n === 1);
+  el.btnDuel.classList.toggle("sel", n === 2);
+}
+
+function renderMenu() {
+  const thr = data.settings.prizeThreshold;
+  el.prizeInfo.textContent = `🎁 ${thr} metreyi geç, sürpriz ödülü kazan!`;
+  const w = todayWinners();
+  el.winnersToday.textContent = w > 0 ? `🎉 Bugün ${w} kişi ödül kazandı!` : "Bugünün ilk ödülünü sen kazan!";
+  el.boardDate.textContent = new Date().toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long" });
+  const list = todayScores().slice(0, CONFIG.rules.leaderboardSize);
+  el.boardList.innerHTML = list.length
+    ? list.map((s, i) => `<li><span class="rank">${i + 1}</span>
+        <span class="nm">${escapeHtml(s.name || "Anonim")}<small>${s.mode === "duel" ? "düello" : ""}</small></span>
+        <span class="dist">${s.distance} m</span></li>`).join("")
+    : `<li class="empty">Henüz kimse koşmadı. İlk sen ol!</li>`;
+}
+
+function goMenu() {
+  state = "menu";
+  game = null;
+  resultInfo = null;
+  el.result.classList.add("hidden");
+  el.menu.classList.remove("hidden");
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  demo = createGame("demo");
+  renderMenu();
+}
+
+function startGame(mode) {
+  Sound.unlock();
+  Sound.click();
+  game = createGame(mode);
+  state = "countdown";
+  countdownT = 0;
+  effects.notices = [];
+  effects.shake = 0;
+  effects.flash = 0;
+  Confetti.clear();
+  el.menu.classList.add("hidden");
+  el.result.classList.add("hidden");
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  game.recordAtStart = todayRecord();
+}
+
+// Çarpma sonrası sonucu hesapla ve kaydet
+function finishGame(crashedLanes) {
+  const thr = data.settings.prizeThreshold;
+  const info = { mode: game.mode, prize: false, winner: null, tie: false, distances: [], entry: null, newRecord: false };
+  game.lanes.forEach((l) => info.distances.push(l.crashDistance != null ? l.crashDistance : meters(game)));
+
+  if (game.mode === "single") {
+    info.distance = info.distances[0];
+    info.prize = info.distance >= thr;
+  } else {
+    if (crashedLanes.length === 1) {
+      info.winner = crashedLanes[0].idx === 1 ? 2 : 1;
+    } else {
+      // Aynı karede çarpma: daha uzun mesafe kazanır, eşitse berabere
+      const [d1, d2] = info.distances;
+      if (d1 > d2) info.winner = 1;
+      else if (d2 > d1) info.winner = 2;
+      else info.tie = true;
+    }
+    if (info.winner) {
+      info.distance = info.distances[info.winner - 1];
+      info.prize = data.settings.duelRule === "a" ? true : info.distance >= thr;
+    } else {
+      info.distance = Math.max(...info.distances);
+    }
+  }
+
+  // Liderlik tablosu (beraberlikte kayıt yok)
+  if (game.mode === "single" || info.winner) {
+    info.newRecord = info.distance > 0 && info.distance > game.recordAtStart;
+    const entry = { id: "s" + Date.now() + Math.floor(Math.random() * 1000), name: "", distance: info.distance, ts: Date.now(), mode: game.mode };
+    data.scores.push(entry);
+    info.entry = entry;
+  }
+  data.games.push({ ts: Date.now(), mode: game.mode, distance: info.distance, prize: info.prize, winner: info.winner });
+  saveData();
+  return info;
+}
+
+function showResult(info) {
+  state = "result";
+  resultInfo = info;
+  resultIdle = 0;
+  resultShownAt = performance.now();
+  const thr = data.settings.prizeThreshold;
+  const r = el.result;
+  r.classList.remove("hidden");
+  r.classList.toggle("win", info.prize);
+  r.style.color = "";
+  el.recordBadge.classList.toggle("hidden", !info.newRecord);
+  el.savedNote.classList.add("hidden");
+  el.nameInput.value = "";
+  el.nameForm.classList.toggle("hidden", !info.entry);
+  el.resMsg.classList.remove("big");
+
+  if (info.mode === "single") {
+    el.duelDists.classList.add("hidden");
+    el.resDistance.classList.remove("hidden");
+    el.resDistance.textContent = `${info.distance} m`;
+    el.nameLabel.textContent = "Takma adın:";
+    if (info.prize) {
+      el.resTitle.textContent = "TEBRİKLER!";
+      el.resMsg.textContent = "Sürpriz ödülünü kazandın! Bu ekranı ekibimize göster.";
+      el.resMsg.classList.add("big");
+    } else {
+      el.resTitle.textContent = "OYUN BİTTİ";
+      el.resTitle.style.color = "";
+      el.resMsg.textContent = `Ödüle ${thr - info.distance} metre kaldı, bir daha dene!`;
+    }
+  } else {
+    el.resDistance.classList.add("hidden");
+    el.duelDists.classList.remove("hidden");
+    el.dd1m.textContent = `${info.distances[0]} m`;
+    el.dd2m.textContent = `${info.distances[1]} m`;
+    el.dd1.classList.toggle("winner", info.winner === 1);
+    el.dd2.classList.toggle("winner", info.winner === 2);
+    el.nameLabel.textContent = "Kazananın takma adı:";
+    if (info.tie) {
+      el.resTitle.textContent = "BERABERE!";
+      el.resMsg.textContent = "İkiniz de aynı anda çarptınız. Rövanş?";
+    } else {
+      el.resTitle.textContent = `OYUNCU ${info.winner} KAZANDI!`;
+      if (info.prize) {
+        el.resMsg.textContent = "TEBRİKLER! Sürpriz ödülünü kazandın! Bu ekranı ekibimize göster.";
+        el.resMsg.classList.add("big");
+      } else {
+        el.resMsg.textContent = `Ödül için kazananın ${thr} metreyi geçmesi gerekiyordu. ${thr - info.distance} metre kaldı!`;
+      }
+    }
+  }
+  // Başlık rengi: kazanan tarafın rengi (ödülde yeşil zemin üzerinde beyaz)
+  if (info.prize) el.resTitle.style.color = "#ffffff";
+  else if (info.mode === "duel" && info.winner) el.resTitle.style.color = info.winner === 1 ? "#4285F4" : "#EA4335";
+  else el.resTitle.style.color = "";
+
+  // Ses ve konfeti
+  if (info.prize) {
+    Sound.prize();
+    Confetti.burst(640, 420, 160);
+    setTimeout(() => { if (state === "result") Confetti.rain(220); }, 350);
+  } else if (info.mode === "single") {
+    Sound.lose();
+  } else {
+    Sound.milestone();
+  }
+  if (info.newRecord) {
+    setTimeout(() => {
+      if (state !== "result") return;
+      Sound.record();
+      Confetti.burst(240, 720, 70, ["#FBBC05", "#FFD54F", "#ffffff"], 18);
+      Confetti.burst(1040, 720, 70, ["#FBBC05", "#FFD54F", "#ffffff"], 18);
+    }, info.prize ? 1600 : 300);
+  }
+}
+
+function saveName() {
+  if (!resultInfo || !resultInfo.entry) return false;
+  const name = el.nameInput.value.trim().slice(0, CONFIG.rules.nameMaxLength);
+  if (!name) return false;
+  resultInfo.entry.name = name;
+  saveData();
+  el.savedNote.textContent = `✓ "${name}" adıyla tabloya kaydedildi`;
+  el.savedNote.classList.remove("hidden");
+  el.nameForm.classList.add("hidden");
+  el.nameInput.blur();
+  return true;
+}
+
+function restart() {
+  if (!resultInfo) return;
+  if (performance.now() - resultShownAt < 700) return;   // yanlışlıkla anında yeniden başlamasın
+  startGame(resultInfo.mode);
+}
+
+/* =====================================================================
+   10) ANA DÖNGÜ (requestAnimationFrame + deltaTime, sabit fizik adımı)
+   ===================================================================== */
+let lastT = performance.now();
+
+function pollGamepads() {
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  const connected = [];
+  for (const p of pads) if (p && p.connected) connected.push(p);
+  for (let i = 0; i < 2; i++) {
+    const pad = connected[i];
+    const pressed = !!pad && pad.buttons.slice(0, 4).some((b) => b && b.pressed);
+    const idx = i + 1;
+    padHeld[idx] = pressed;
+    if (pressed && !padPrev[i]) {
+      if (state === "playing") pressJump(idx);
+      else if (state === "menu") startGame(menuSel === 2 ? "duel" : "single");
+      else if (state === "result") restart();
+    }
+    padPrev[i] = pressed;
+  }
+}
+
+function update(dt) {
+  pollGamepads();
+  effects.shake = Math.max(0, effects.shake - dt);
+  effects.flash = Math.max(0, effects.flash - dt * 2.2);
+  effects.notices.forEach((n) => { n.t += dt; });
+  effects.notices = effects.notices.filter((n) => n.t < n.life);
+  Confetti.update(dt);
+
+  if (state === "menu") {
+    // Demo (attract) modu: robot kendi kendine koşar
+    demo.acc += dt;
+    while (demo.acc >= P.fixedStep) {
+      demo.acc -= P.fixedStep;
+      const crashed = stepGame(demo, P.fixedStep);
+      if (crashed.length) { demo = createGame("demo"); break; }
+    }
+    return;
+  }
+
+  if (state === "countdown") {
+    const before = Math.floor(countdownT / 0.75);
+    countdownT += dt;
+    const after = Math.floor(countdownT / 0.75);
+    if (countdownT - dt <= 0 || after !== before) {
+      const n = Math.min(after, 3);
+      Sound.countdown(n === 3);
+    }
+    if (countdownT >= 0.75 * 3) {
+      state = "playing";
+      game.lanes.forEach((l) => { l.player.queued = false; l.player.buffer = 0; });
+    }
+    return;
+  }
+
+  if (state === "playing") {
+    // Basılı tuş durumlarını oyunculara aktar
+    game.lanes.forEach((l) => { l.player.held = playerHeld(l.idx); });
+    game.acc += dt;
+    while (game.acc >= P.fixedStep) {
+      game.acc -= P.fixedStep;
+      const crashed = stepGame(game, P.fixedStep);
+      if (crashed.length) { onCrash(crashed); break; }
+    }
+    if (state === "playing") checkMilestones();
+    return;
+  }
+
+  if (state === "crashed") {
+    game.crashT += dt;
+    if (game.crashT >= CONFIG.rules.crashPauseSec) showResult(game.result);
+    return;
+  }
+
+  if (state === "result") {
+    resultIdle += dt;
+    const left = 1 - resultIdle / CONFIG.rules.resultTimeoutSec;
+    el.resTimer.style.transform = `scaleX(${clamp(left, 0, 1)})`;
+    if (resultIdle >= CONFIG.rules.resultTimeoutSec) goMenu();
+  }
+}
+
+function onCrash(crashedLanes) {
+  state = "crashed";
+  game.crashT = 0;
+  effects.shake = 0.4;
+  effects.flash = 1;
+  crashedLanes.forEach((l) => { l.flash = 1; });
+  Sound.crash();
+  game.result = finishGame(crashedLanes);
+}
+
+function checkMilestones() {
+  const m = meters(game);
+  const ms = CONFIG.rules.milestones;
+  while (game.nextMilestone < ms.length && m >= ms[game.nextMilestone]) {
+    notify(`${ms[game.nextMilestone]} m! Seviye atladın 🚀`, "#4285F4");
+    Sound.milestone();
+    game.nextMilestone++;
+  }
+  const thr = data.settings.prizeThreshold;
+  if (!game.thresholdAnnounced && m >= thr) {
+    game.thresholdAnnounced = true;
+    notify(game.mode === "single" ? `🎁 ${thr} m geçildi! Ödül senin!` : `🎁 ${thr} m geçildi!`, "#34A853");
+    Sound.record();
+  }
+}
+
+function render() {
+  const W = CONFIG.view.width, H = CONFIG.view.height;
+  ctx.save();
+  ctx.clearRect(0, 0, W, H);
+
+  // Ekran sarsıntısı
+  if (effects.shake > 0) {
+    const k = effects.shake * 30;
+    ctx.translate((Math.random() - 0.5) * k, (Math.random() - 0.5) * k);
+  }
+
+  if (state === "menu") {
+    drawLane(demo, demo.lanes[0], { x: 0, y: 0, w: W, h: H }, P1C);
+  } else if (game) {
+    const rects = laneRects(game);
+    game.lanes.forEach((lane, i) => drawLane(game, lane, rects[i], i === 0 ? P1C : P2C));
+    drawHUD(rects);
+  }
+  ctx.restore();
+
+  // Kırmızı flaş
+  if (effects.flash > 0) {
+    ctx.fillStyle = `rgba(234,67,53,${effects.flash * 0.35})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // Efekt katmanı (konfeti sonuç ekranının da üstünde)
+  fx.clearRect(0, 0, W, H);
+  Confetti.draw(fx);
+}
+
+function drawHUD(rects) {
+  const W = CONFIG.view.width, H = CONFIG.view.height;
+  const m = meters(game);
+  const record = Math.max(game.recordAtStart || 0, 0);
+  const beat = m > record && record > 0;
+
+  if (game.mode === "single") {
+    text(ctx, `${m} m`, W / 2, 62, { size: 72, stroke: "#ffffff" });
+    text(ctx, `Günün rekoru: ${record} m`, W - 30, 40, { size: 24, align: "right", color: beat ? "#c58a00" : "#5f6368", weight: 800, stroke: "#ffffff" });
+    if (beat) text(ctx, "⭐ Rekoru geçiyorsun!", W - 30, 74, { size: 20, align: "right", color: "#c58a00", weight: 800, stroke: "#ffffff" });
+  } else {
+    // Her yarının sol üstünde etiket + kendi mesafesi
+    game.lanes.forEach((lane, i) => {
+      const r = rects[i];
+      const col = i === 0 ? "#4285F4" : "#EA4335";
+      const d = lane.crashDistance != null ? lane.crashDistance : m;
+      text(ctx, i === 0 ? "OYUNCU 1 (W)" : "OYUNCU 2 (↑)", r.x + 24, r.y + 32, { size: 26, align: "left", color: col, stroke: "#ffffff" });
+      text(ctx, `${d} m`, r.x + 24, r.y + 70, { size: 38, align: "left", stroke: "#ffffff" });
+      // Çarpan tarafta yarı saydam "ÇARPTI!"
+      if (lane.player.crashed) {
+        ctx.fillStyle = `rgba(234,67,53,${0.12 + lane.flash * 0.2})`;
+        ctx.fillRect(r.x, r.y, r.w, r.h);
+        ctx.globalAlpha = 0.75;
+        text(ctx, "ÇARPTI!", r.x + r.w / 2, r.y + r.h / 2, { size: 96, color: "#EA4335", stroke: "#ffffff" });
+        ctx.globalAlpha = 1;
+      }
+    });
+    text(ctx, `Günün rekoru: ${record} m`, W - 30, 32, { size: 22, align: "right", color: beat ? "#c58a00" : "#5f6368", weight: 800, stroke: "#ffffff" });
+    // Ortadaki kalın ayırıcı çizgi
+    ctx.fillStyle = "#202124";
+    ctx.fillRect(0, H / 2 - 4, W, 8);
+    ctx.fillStyle = "#FBBC05";
+    ctx.fillRect(0, H / 2 - 1, W, 2);
+  }
+
+  if (game.mode === "single" && game.lanes[0].player.crashed) {
+    ctx.globalAlpha = 0.75;
+    text(ctx, "ÇARPTI!", W / 2, H / 2 - 40, { size: 110, color: "#EA4335", stroke: "#ffffff" });
+    ctx.globalAlpha = 1;
+  }
+
+  // Geri sayım: 3 - 2 - 1 - BAŞLA! (her biri farklı Google rengi)
+  if (state === "countdown" || (state === "playing" && game.time < 0.6)) {
+    const labels = ["3", "2", "1", "BAŞLA!"];
+    const colors = ["#4285F4", "#EA4335", "#FBBC05", "#34A853"];
+    let idx, local;
+    if (state === "countdown") { idx = Math.min(3, Math.floor(countdownT / 0.75)); local = (countdownT % 0.75) / 0.75; }
+    else { idx = 3; local = game.time / 0.6; }
+    const sc = 1.4 - Math.min(local, 0.3) * 1.3;
+    const alpha = idx === 3 && state === "playing" ? 1 - local : 1;
+    ctx.save();
+    ctx.globalAlpha = clamp(alpha, 0, 1);
+    ctx.translate(W / 2, H / 2);
+    ctx.scale(sc, sc);
+    text(ctx, labels[idx], 0, 0, { size: idx === 3 ? 150 : 220, color: colors[idx], stroke: "#ffffff" });
+    ctx.restore();
+  }
+
+  // Bildirimler (seviye, eşik)
+  effects.notices.forEach((n, i) => {
+    const a = n.t < 0.2 ? n.t / 0.2 : n.t > n.life - 0.4 ? (n.life - n.t) / 0.4 : 1;
+    const y = (game.mode === "single" ? 150 : H / 2 + 0) + i * 56 - Math.min(n.t, 0.2) * 40;
+    ctx.save();
+    ctx.globalAlpha = clamp(a, 0, 1);
+    ctx.font = "900 30px system-ui, sans-serif";
+    const tw = ctx.measureText(n.text).width + 48;
+    ctx.fillStyle = n.color;
+    roundRect(ctx, W / 2 - tw / 2, y - 26, tw, 52, 26);
+    ctx.fill();
+    text(ctx, n.text, W / 2, y + 1, { size: 30, color: "#ffffff" });
+    ctx.restore();
+  });
+}
+
+function loop(now) {
+  const dt = Math.min(0.1, Math.max(0, (now - lastT) / 1000));   // sekme değişiminde büyük sıçramayı engelle
+  lastT = now;
+  update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+
+/* =====================================================================
+   11) OLAY DİNLEYİCİLERİ
+   ===================================================================== */
+function toggleFullscreen() {
+  const d = document;
+  try {
+    if (!(d.fullscreenElement || d.webkitFullscreenElement)) {
+      const r = d.documentElement;
+      (r.requestFullscreen || r.webkitRequestFullscreen).call(r);
+    } else {
+      (d.exitFullscreen || d.webkitExitFullscreen).call(d);
+    }
+  } catch (e) { /* desteklenmiyor */ }
+}
+function toggleMute() {
+  data.settings.muted = !data.settings.muted;
+  saveData();
+  if (game || state === "menu") notify(data.settings.muted ? "🔇 Ses kapalı" : "🔊 Ses açık", "#5f6368");
+}
+
+document.addEventListener("keydown", (e) => {
+  Sound.unlock();
+  const k = (e.key || "").toLowerCase();
+  if (state === "result") resultIdle = 0;
+
+  // Gizli yönetici paneli
+  if (e.ctrlKey && e.shiftKey && (k === "a" || e.code === "KeyA")) {
+    e.preventDefault();
+    toggleAdmin();
+    return;
+  }
+  // Yazı yazılırken oyun kısayolları çalışmaz (Enter/Esc form tarafından yönetilir)
+  if (isTyping(e.target)) {
+    if (e.key === "Escape") e.target.blur();
+    return;
+  }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+  // Zıplama tuşları: basılı durum takibi (iki oyuncu birbirini engellemez)
+  if (e.code in keysHeld) {
+    e.preventDefault();
+    if (e.repeat) return;
+    if (!keysHeld[e.code]) {
+      keysHeld[e.code] = true;
+      if (state === "playing") {
+        if (e.code === "ArrowUp") pressJump(game.mode === "duel" ? 2 : 1);
+        else pressJump(1);
+      }
+    }
+    if (state === "menu" && e.code === "ArrowUp") setMenuSel(1);
+    return;
+  }
+  if (state === "menu" && e.code === "ArrowDown") { e.preventDefault(); setMenuSel(2); return; }
+
+  if (k === "f") { toggleFullscreen(); return; }
+  if (k === "m") { toggleMute(); return; }
+
+  if (state === "menu") {
+    if (k === "1" || e.code === "Digit1" || e.code === "Numpad1") { startGame("single"); return; }
+    if (k === "2" || e.code === "Digit2" || e.code === "Numpad2") { startGame("duel"); return; }
+    if (e.key === "Enter") { e.preventDefault(); startGame(menuSel === 2 ? "duel" : "single"); return; }
+    if (e.key === "ArrowLeft") setMenuSel(1);
+    if (e.key === "ArrowRight") setMenuSel(2);
+    return;
+  }
+  if (state === "result") {
+    if (e.key === "Enter") { e.preventDefault(); restart(); return; }
+    if (e.key === "Escape") { goMenu(); return; }
+  }
+});
+document.addEventListener("keyup", (e) => {
+  if (e.code in keysHeld) keysHeld[e.code] = false;
+});
+// Pencere odağı kaybolursa basılı tuşları sıfırla
+window.addEventListener("blur", () => {
+  Object.keys(keysHeld).forEach((k) => { keysHeld[k] = false; });
+  touchHeld[1].clear(); touchHeld[2].clear();
+});
+
+// Dokunmatik / fare: tek kişilikte ekran → zıpla; düelloda üst yarı P1, alt yarı P2
+stageEl.addEventListener("pointerdown", (e) => {
+  Sound.unlock();
+  if (state === "result") resultIdle = 0;
+  if (state !== "playing" && state !== "countdown") return;
+  if (e.target.closest("button, input, form")) return;
+  const r = stageEl.getBoundingClientRect();
+  const yRel = (e.clientY - r.top) / r.height;
+  const idx = game.mode === "duel" && yRel >= 0.5 ? 2 : 1;
+  touchHeld[idx].add(e.pointerId);
+  pressJump(idx);
+  e.preventDefault();
+});
+function releasePointer(e) {
+  touchHeld[1].delete(e.pointerId);
+  touchHeld[2].delete(e.pointerId);
+}
+window.addEventListener("pointerup", releasePointer);
+window.addEventListener("pointercancel", releasePointer);
+
+// Menü butonları
+el.btnSingle.addEventListener("click", () => startGame("single"));
+el.btnDuel.addEventListener("click", () => startGame("duel"));
+el.btnSingle.addEventListener("mouseenter", () => setMenuSel(1));
+el.btnDuel.addEventListener("mouseenter", () => setMenuSel(2));
+
+// Sonuç ekranı
+el.nameForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  resultIdle = 0;
+  if (!saveName()) el.nameInput.blur();
+});
+el.nameInput.addEventListener("input", () => { resultIdle = 0; });
+$("#btnAgain").addEventListener("click", () => { resultShownAt = 0; restart(); });
+$("#btnMenu").addEventListener("click", goMenu);
+
+/* =====================================================================
+   12) YÖNETİCİ PANELİ
+   ===================================================================== */
+function toggleAdmin() {
+  const open = el.admin.classList.toggle("hidden") === false;
+  if (open) renderAdmin();
+  else if (document.activeElement && el.admin.contains(document.activeElement)) document.activeElement.blur();
+}
+function renderAdmin() {
+  const s = data.settings;
+  $("#setThreshold").value = s.prizeThreshold;
+  $("#setStartSpeed").value = s.startSpeed;
+  $("#setAccel").value = s.speedIncrease;
+  $("#ruleA").checked = s.duelRule === "a";
+  $("#ruleB").checked = s.duelRule === "b";
+  renderStats();
+}
+function renderStats() {
+  const k = dayKey(Date.now());
+  const today = data.games.filter((g) => dayKey(g.ts) === k);
+  $("#stGamesToday").textContent = today.length;
+  $("#stWinnersToday").textContent = today.filter((g) => g.prize).length;
+  $("#stGamesAll").textContent = data.games.length;
+  $("#stWinnersAll").textContent = data.games.filter((g) => g.prize).length;
+}
+function bindNumber(id, key, min, max) {
+  $(id).addEventListener("input", (e) => {
+    const v = Number(e.target.value);
+    if (!Number.isFinite(v) || e.target.value === "") return;
+    data.settings[key] = clamp(v, min, max);
+    saveData();
+    if (state === "menu") renderMenu();
+  });
+  $(id).addEventListener("change", (e) => { e.target.value = data.settings[key]; });
+}
+bindNumber("#setThreshold", "prizeThreshold", 1, 100000);
+bindNumber("#setStartSpeed", "startSpeed", 100, CONFIG.physics.maxSpeed);
+bindNumber("#setAccel", "speedIncrease", 0, 200);
+document.querySelectorAll('input[name="duelRule"]').forEach((r) => {
+  r.addEventListener("change", (e) => {
+    data.settings.duelRule = e.target.value;
+    saveData();
+  });
+});
+$("#adminClose").addEventListener("click", toggleAdmin);
+$("#resetToday").addEventListener("click", () => {
+  if (!confirm("Bugünün liderlik tablosu silinsin mi?")) return;
+  const k = dayKey(Date.now());
+  data.scores = data.scores.filter((s) => dayKey(s.ts) !== k);
+  saveData();
+  renderStats();
+  if (state === "menu") renderMenu();
+});
+$("#resetAll").addEventListener("click", () => {
+  if (!confirm("TÜM veriler (ayarlar, liderlik tabloları, istatistikler) silinecek. Emin misiniz?")) return;
+  try { localStorage.removeItem(CONFIG.storageKey); } catch (e) { /* yoksay */ }
+  data = defaultData();
+  saveData();
+  renderAdmin();
+  if (state === "menu") renderMenu();
+});
+// Panel açıkken istatistikleri canlı tut
+setInterval(() => { if (!el.admin.classList.contains("hidden")) renderStats(); }, 1000);
+
+/* =====================================================================
+   13) BAŞLAT
+   ===================================================================== */
+resize();
+goMenu();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
